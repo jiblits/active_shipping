@@ -650,6 +650,53 @@ class FedExTest < ActiveSupport::TestCase
     assert_equal result.search('RequestedPackageLineItems/CustomerReferences[last()]/CustomerReferenceType').text, "INVOICE_NUMBER"
   end
 
+  def test_create_shipment_with_shipping_notifications
+    packages = package_fixtures.values_at(:wii)
+    result = Nokogiri::XML(@carrier.send(:build_shipment_request,
+                                         location_fixtures[:beverly_hills],
+                                         location_fixtures[:annapolis],
+                                         packages,
+                                         test: true,
+                                         notifications: [
+                                           {role: :shipper, email: 'shipper@example.com', events: [:exception]},
+                                           {role: :recipient, email: 'recipient@example.com', events: [:shipment, :exception]}
+                                         ]
+                                        ))
+    assert_equal result.search('SpecialServicesRequested/SpecialServiceTypes').text.include?('EVENT_NOTIFICATION'), true
+    recipients = result.search('SpecialServicesRequested/EventNotificationDetail/EventNotifications')
+    assert_equal 2, recipients.count
+
+    assert_equal recipients.first.search('Role').text, 'SHIPPER'
+    assert_equal ['ON_EXCEPTION'], recipients.first.search('Events').map(&:text)
+    assert_equal recipients.first.search('EmailDetail/EmailAddress').text, 'shipper@example.com'
+
+    assert_equal recipients.last.search('Role').text, 'RECIPIENT'
+    assert_equal ['ON_SHIPMENT', 'ON_EXCEPTION'], recipients.last.search('Events').map(&:text)
+    assert_equal recipients.last.search('EmailDetail/EmailAddress').text, 'recipient@example.com'
+  end
+
+  def test_create_shipment_with_more_than_6_recipients
+    packages = package_fixtures.values_at(:wii)
+
+    assert_raises(FedEx::TooManyRecipientsError) do
+      @carrier.send(:build_shipment_request,
+        location_fixtures[:beverly_hills],
+        location_fixtures[:annapolis],
+        packages,
+        test: true,
+        notifications: [
+          {role: :shipper, email: 'shipper@example.com', events: [:exception]},
+          {role: :shipper, email: 'shipper@example.com', events: [:exception]},
+          {role: :shipper, email: 'shipper@example.com', events: [:exception]},
+          {role: :shipper, email: 'shipper@example.com', events: [:exception]},
+          {role: :shipper, email: 'shipper@example.com', events: [:exception]},
+          {role: :shipper, email: 'shipper@example.com', events: [:exception]},
+          {role: :shipper, email: 'shipper@example.com', events: [:exception]},
+        ]
+      )
+    end
+  end
+
   def test_create_shipment_label_format_option
     packages = package_fixtures.values_at(:chocolate_stuff)
     result = Nokogiri::XML(@carrier.send(:build_shipment_request,

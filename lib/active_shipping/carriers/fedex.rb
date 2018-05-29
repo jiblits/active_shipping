@@ -5,6 +5,9 @@ module ActiveShipping
   # FedEx module by Jimmy Baker (http://github.com/jimmyebaker)
   # Documentation can be found here: http://images.fedex.com/us/developer/product/WebServices/MyWebHelp/PropDevGuide.pdf
   class FedEx < Carrier
+
+    class TooManyRecipientsError < ActiveShipping::Error; end
+
     self.retry_safe = true
 
     cattr_reader :name
@@ -16,6 +19,22 @@ module ActiveShipping
     CARRIER_CODES = {
       "fedex_ground" => "FDXG",
       "fedex_express" => "FDXE"
+    }
+
+    SHIPMENT_ROLES = {
+      shipper: 'SHIPPER',
+      broker: 'BROKER',
+      recipient: 'RECIPIENT',
+      other: 'OTHER',
+      third_party: 'THIRD_PARTY'
+    }
+
+    SHIPMENT_EVENTS = {
+      delivery: 'ON_DELIVERY',
+      estimated_delivery: 'ON_ESTIMATED_DELIVERY',
+      exception: 'ON_EXCEPTION',
+      shipment: 'ON_SHIPMENT',
+      tender: 'ON_TENDER'
     }
 
     DELIVERY_ADDRESS_NODE_NAMES = %w(DestinationAddress ActualDeliveryAddress)
@@ -170,7 +189,6 @@ module ActiveShipping
       parse_tracking_response(xml, options)
     end
 
-
     # Get Shipping labels
     def create_shipment(origin, destination, packages, options = {})
       options = @options.merge(options)
@@ -195,9 +213,9 @@ module ActiveShipping
       imperial = location_uses_imperial(origin)
 
       xml_builder = Nokogiri::XML::Builder.new do |xml|
-        xml.ProcessShipmentRequest(xmlns: 'http://fedex.com/ws/ship/v13') do
+        xml.ProcessShipmentRequest(xmlns: 'http://fedex.com/ws/ship/v18') do
           build_request_header(xml)
-          build_version_node(xml, 'ship', 13, 0 ,0)
+          build_version_node(xml, 'ship', 18, 0 ,0)
 
           xml.RequestedShipment do
             xml.ShipTimestamp(ship_timestamp(options[:turn_around_time]).iso8601(0))
@@ -221,6 +239,13 @@ module ActiveShipping
               xml.PaymentType('SENDER')
               xml.Payor do
                 build_shipment_responsible_party_node(xml, options[:shipper] || origin)
+              end
+            end
+
+            if options[:notifications]
+              xml.SpecialServicesRequested do
+                xml.SpecialServiceTypes('EVENT_NOTIFICATION')
+                build_shipment_notifications_nodes(xml, options[:notifications])
               end
             end
 
@@ -288,6 +313,25 @@ module ActiveShipping
           xml.PersonName(origin.name)
           xml.CompanyName(origin.company)
           xml.PhoneNumber(origin.phone)
+        end
+      end
+    end
+
+    def build_shipment_notifications_nodes(xml, recipients)
+      raise FedEx::TooManyRecipientsError if recipients.count > 6
+      xml.EventNotificationDetail do
+        xml.AggregationType('PER_SHIPMENT')
+        recipients.each do |recipient|
+          xml.EventNotifications do
+            xml.Role(SHIPMENT_ROLES[recipient[:role]])
+            recipient[:events].each {|e| xml.Events(SHIPMENT_EVENTS[e])}
+            xml.NotificationDetail do
+              xml.NotificationType('EMAIL')
+              xml.EmailDetail { xml.EmailAddress(recipient[:email]) }
+              xml.Localization { xml.LanguageCode('EN') }
+            end
+            xml.FormatSpecification { xml.Type('HTML') }
+          end
         end
       end
     end
