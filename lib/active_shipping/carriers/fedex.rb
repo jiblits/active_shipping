@@ -222,6 +222,7 @@ module ActiveShipping
             xml.DropoffType('REGULAR_PICKUP')
             xml.ServiceType(options[:service_type] || 'FEDEX_GROUND')
             xml.PackagingType('YOUR_PACKAGING')
+            xml.TotalInsuredValue(options[:insured_value]) if options[:insured_value]
 
             xml.Shipper do
               build_contact_address_nodes(xml, options[:shipper] || origin)

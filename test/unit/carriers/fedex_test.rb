@@ -675,6 +675,20 @@ class FedExTest < ActiveSupport::TestCase
     assert_equal recipients.last.search('EmailDetail/EmailAddress').text, 'recipient@example.com'
   end
 
+  def test_create_shipment_with_insurance
+    packages = package_fixtures.values_at(:wii)
+    result = Nokogiri::XML(@carrier.send(:build_shipment_request,
+                                         location_fixtures[:beverly_hills],
+                                         location_fixtures[:annapolis],
+                                         packages,
+                                         test: true,
+                                         insured_value: 150
+                                        ))
+    assert_equal result.search('TotalInsuredValue').text, "150"
+
+    puts result
+  end
+
   def test_create_shipment_with_more_than_6_recipients
     packages = package_fixtures.values_at(:wii)
 
