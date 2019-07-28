@@ -382,6 +382,33 @@ class RemoteFedExTest < ActiveSupport::TestCase
     assert_equal FedEx::SIGNATURE_OPTION_CODES[:adult], signature_option
   end
 
+  def test_creating_a_multi_package_shipment
+    packages = package_fixtures.values_at(:wii, :books)
+
+    responses = @carrier.create_multi_package_shipment(
+      location_fixtures[:beverly_hills_with_name],
+      location_fixtures[:new_york_with_name],
+      packages,
+      {test: true}
+    )
+
+    assert_equal 2, responses.size
+    assert_equal true, responses.all?(&:success?)
+  end
+
+  def test_creating_a_multi_package_shipment_via_create_shipment_raises_an_error
+    packages = package_fixtures.values_at(:wii, :books)
+
+    assert_raises(FedEx::MultiPackageShipmentError) do
+      response = @carrier.create_shipment(
+        location_fixtures[:beverly_hills_with_name],
+        location_fixtures[:new_york_with_name],
+        packages,
+        {test: true}
+      )
+    end
+  end
+
   def test_obtain_shipping_label_with_label_format_option
     response = @carrier.create_shipment(
       location_fixtures[:beverly_hills_with_name],

@@ -7,6 +7,7 @@ module ActiveShipping
   class FedEx < Carrier
 
     class TooManyRecipientsError < ActiveShipping::Error; end
+    class MultiPackageShipmentError < ActiveShipping::Error; end
 
     self.retry_safe = true
 
@@ -193,13 +194,47 @@ module ActiveShipping
     def create_shipment(origin, destination, packages, options = {})
       options = @options.merge(options)
       packages = Array(packages)
-      raise Error, "Multiple packages are not supported yet." if packages.length > 1
+
+      if packages.length > 1
+        raise MultiPackageShipmentError, "Multiple packages are not supported in create shipment. Use #create_multi_package_shipment" if packages.length > 1
+      end
 
       request = build_shipment_request(origin, destination, packages, options)
       logger.debug(request) if logger
 
       response = commit(save_request(request), (options[:test] || false))
       parse_ship_response(response)
+    end
+
+    def create_multi_package_shipment(origin, destination, packages, options = {})
+      master_package, child_packages = packages.first, packages[1..-1]
+
+      master_request = build_shipment_request(
+        origin, destination, [master_package],
+        options.merge(sequence_number: 1, number_of_packages: packages.size)
+      )
+      master_response = commit(save_request(master_request), (options[:test] || false))
+      master_label_response = parse_ship_response(master_response)
+
+      return [master_label_response] unless master_label_response.success?
+
+      master_label = master_label_response.labels.first
+      responses = [master_label_response]
+
+      child_packages.each.with_index(2) do |package, sequence_number|
+        child_options = options.merge(
+          sequence_number: sequence_number,
+          number_of_packages: packages.size,
+          master_tracking_id: master_label.tracking_number
+        )
+        child_request = build_shipment_request(origin, destination, [package], child_options)
+        child_response = commit(save_request(child_request), (options[:test] || false))
+        responses << parse_ship_response(child_response)
+
+        return responses unless responses.last.success?
+      end
+
+      return responses
     end
 
     def maximum_address_field_length
@@ -213,9 +248,9 @@ module ActiveShipping
       imperial = location_uses_imperial(origin)
 
       xml_builder = Nokogiri::XML::Builder.new do |xml|
-        xml.ProcessShipmentRequest(xmlns: 'http://fedex.com/ws/ship/v18') do
+        xml.ProcessShipmentRequest(xmlns: 'http://fedex.com/ws/ship/v21') do
           build_request_header(xml)
-          build_version_node(xml, 'ship', 18, 0 ,0)
+          build_version_node(xml, 'ship', 21, 0 ,0)
 
           xml.RequestedShipment do
             xml.ShipTimestamp(ship_timestamp(options[:turn_around_time]).iso8601(0))
@@ -258,9 +293,14 @@ module ActiveShipping
 
             xml.RateRequestTypes('ACCOUNT')
 
-            xml.PackageCount(packages.size)
+            if master_tracking_id = options[:master_tracking_id]
+              xml.MasterTrackingId { xml.TrackingNumber(master_tracking_id)}
+            end
+
+            xml.PackageCount(options[:number_of_packages] || 1)
             packages.each do |package|
               xml.RequestedPackageLineItems do
+                xml.SequenceNumber(options[:sequence_number] || 1)
                 xml.GroupPackageCount(1)
                 build_package_weight_node(xml, package, imperial)
                 build_package_dimensions_node(xml, package, imperial)
