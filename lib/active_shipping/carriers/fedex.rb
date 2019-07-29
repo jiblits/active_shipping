@@ -211,7 +211,11 @@ module ActiveShipping
 
       master_request = build_shipment_request(
         origin, destination, [master_package],
-        options.merge(sequence_number: 1, number_of_packages: packages.size)
+        options.merge(
+          sequence_number: 1,
+          number_of_packages: packages.size,
+          packages: packages
+        )
       )
       master_response = commit(save_request(master_request), (options[:test] || false))
       master_label_response = parse_ship_response(master_response)
@@ -257,7 +261,9 @@ module ActiveShipping
             xml.DropoffType('REGULAR_PICKUP')
             xml.ServiceType(options[:service_type] || 'FEDEX_GROUND')
             xml.PackagingType('YOUR_PACKAGING')
+            build_total_weight_node(xml, options[:packages], imperial) if options[:packages]
             xml.TotalInsuredValue(options[:insured_value]) if options[:insured_value]
+
 
             xml.Shipper do
               build_contact_address_nodes(xml, options[:shipper] || origin)
@@ -491,6 +497,14 @@ module ActiveShipping
           xml.public_send(axis.to_s.capitalize, value.ceil)
         end
         xml.Units(imperial ? 'IN' : 'CM')
+      end
+    end
+
+    def build_total_weight_node(xml, packages, imperial)
+      total_weight = packages.map { |pkg| imperial ? pkg.lbs : pkg.kgs }.map(&:to_f).sum
+      xml.TotalWeight do
+        xml.Units(imperial ? 'LB' : 'KG')
+        xml.Value([(total_weight * 1000).round / 1000, 0.1].max)
       end
     end
 
